@@ -179,7 +179,7 @@ class MainActivity : Activity() {
         worker.execute {
             try {
                 val result = task()
-                if (label.contains("SCAN", ignoreCase = true) || label.contains("AUDIT", ignoreCase = true)) {
+                if (label.contains("SCAN", ignoreCase = true) || label.contains("AUDIT", ignoreCase = true) || label.contains("CHECK", ignoreCase = true)) {
                     lastReport = result
                     saveScanHistory(label, result)
                 }
@@ -670,7 +670,7 @@ class MainActivity : Activity() {
 
     private fun saveReportPdf() {
         if (lastReport.isBlank()) {
-            setResultText("Run a vulnerability scan before exporting a PDF report.")
+            setResultText("Run a security check before exporting a PDF report.")
             return
         }
         pendingPdfReport = lastReport
@@ -773,7 +773,7 @@ class MainActivity : Activity() {
             return
         }
         if (requestCode != pickApkRequest) return
-        runCheck("APK PERMISSION INVENTORY") {
+        runCheck("APK DEEP STATIC SECURITY AUDIT") {
             val temp = File(cacheDir, "selected-analysis.apk")
             contentResolver.openInputStream(uri).use { input ->
                 requireNotNull(input) { "Could not open the selected APK." }
