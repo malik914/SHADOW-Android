@@ -770,17 +770,57 @@ class MainActivity : Activity() {
             val info = readPackageInfo(temp.absolutePath)
                 ?: error("Android could not read this APK. Select a valid APK file.")
             val permissions = info.requestedPermissions?.toList().orEmpty()
-            "APK ANALYSIS\nPackage: ${info.packageName}\nVersion: ${info.versionName ?: "unknown"}\n" +
-                "Requested permissions: ${permissions.size}\n\n" +
-                (if (permissions.isEmpty()) "No requested permissions listed."
-                else permissions.joinToString("\n") { "• $it" }) +
-                "\n\nThis is a permission inventory only; it does not execute or install the APK."
+            val activities = info.activities?.toList().orEmpty()
+            val services = info.services?.toList().orEmpty()
+            val receivers = info.receivers?.toList().orEmpty()
+            val providers = info.providers?.toList().orEmpty()
+            val exportedComponents = buildList {
+                activities.filter { it.exported }.forEach { add("Activity: ${it.name}") }
+                services.filter { it.exported }.forEach { add("Service: ${it.name}") }
+                receivers.filter { it.exported }.forEach { add("Receiver: ${it.name}") }
+                providers.filter { it.exported }.forEach {
+                    add("Provider: ${it.name} (authorities: ${it.authority ?: "not supplied"})")
+                }
+            }
+            val dangerousPermissions = permissions.filter { permission ->
+                permission in setOf(
+                    "android.permission.READ_CONTACTS", "android.permission.WRITE_CONTACTS",
+                    "android.permission.READ_CALL_LOG", "android.permission.WRITE_CALL_LOG",
+                    "android.permission.CAMERA", "android.permission.RECORD_AUDIO",
+                    "android.permission.ACCESS_FINE_LOCATION", "android.permission.ACCESS_COARSE_LOCATION",
+                    "android.permission.READ_SMS", "android.permission.SEND_SMS",
+                    "android.permission.RECEIVE_SMS", "android.permission.READ_PHONE_STATE",
+                    "android.permission.READ_EXTERNAL_STORAGE", "android.permission.WRITE_EXTERNAL_STORAGE"
+                )
+            }
+            "APK STATIC SECURITY INVENTORY\\nPackage: ${info.packageName}\\nVersion: ${info.versionName ?: "unknown"}\\n" +
+                "Target SDK: ${info.applicationInfo?.targetSdkVersion ?: -1}\\n" +
+                "Requested permissions: ${permissions.size}\\n" +
+                "Components: ${activities.size} activities | ${services.size} services | ${receivers.size} receivers | ${providers.size} providers\\n\\n" +
+                "PERMISSIONS\\n" + (if (permissions.isEmpty()) "No requested permissions listed."
+                else permissions.joinToString("\\n") { "• $it" }) +
+                "\\n\\nSENSITIVE PERMISSIONS TO REVIEW\\n" +
+                (if (dangerousPermissions.isEmpty()) "No permissions from SHADOW's review list were found."
+                else dangerousPermissions.joinToString("\\n") { "REVIEW: $it" }) +
+                "\\n\\nEXPORTED COMPONENTS\\n" +
+                (if (exportedComponents.isEmpty()) "No exported components reported by Android's APK parser."
+                else exportedComponents.joinToString("\\n")) +
+                "\\n\\nCOMPONENT REVIEW\\nExported components are not automatically vulnerabilities. Verify intent filters, permissions, and whether external callers should access them. " +
+                "This static inventory does not execute the APK, inspect native code, or prove the presence or absence of hardcoded secrets."
+
         }
     }
 
     @Suppress("DEPRECATION")
     private fun readPackageInfo(path: String): PackageInfo? =
-        packageManager.getPackageArchiveInfo(path, PackageManager.GET_PERMISSIONS)
+        packageManager.getPackageArchiveInfo(
+            path,
+            PackageManager.GET_PERMISSIONS or
+                PackageManager.GET_ACTIVITIES or
+                PackageManager.GET_SERVICES or
+                PackageManager.GET_RECEIVERS or
+                PackageManager.GET_PROVIDERS
+        )
 
     override fun onDestroy() {
         worker.shutdown()
