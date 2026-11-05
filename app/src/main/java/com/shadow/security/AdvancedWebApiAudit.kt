@@ -27,7 +27,7 @@ object AdvancedWebApiAudit {
             val changed = key + "=" + java.net.URLEncoder.encode(replacement, "UTF-8")
             val rest = query.substringAfter("&", "")
             val newQuery = if (rest.isBlank()) changed else "$changed&$rest"
-            return URL(base.protocol, base.host, base.port, base.path + "?" + newQuery + (base.ref?.let { "#$it" } ?: ""))
+            return URL(base.protocol, base.host, base.port, base.path + "?" + newQuery)
         }
         fun fetch(target: URL): Pair<Int, String> {
             val connection = target.openConnection() as HttpURLConnection
@@ -39,7 +39,16 @@ object AdvancedWebApiAudit {
                 connection.setRequestProperty("User-Agent", "SHADOW-Android/2.1 (authorized-safe-input-check)")
                 val status = connection.responseCode
                 val stream = if (status >= 400) connection.errorStream else connection.inputStream
-                val body = stream?.bufferedReader()?.use { it.readText().take(262144) } ?: ""
+                val body = stream?.bufferedReader()?.use { reader ->
+                    val out = StringBuilder()
+                    val buffer = CharArray(4096)
+                    while (out.length < 262144) {
+                        val count = reader.read(buffer, 0, minOf(buffer.size, 262144 - out.length))
+                        if (count <= 0) break
+                        out.append(buffer, 0, count)
+                    }
+                    out.toString()
+                } ?: ""
                 return status to body
             } finally {
                 connection.disconnect()
