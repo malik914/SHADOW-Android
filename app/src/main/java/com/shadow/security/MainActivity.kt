@@ -104,6 +104,10 @@ class MainActivity : Activity() {
 
         addAction(content, "SCAN TCP PORTS") { scanPorts() }
         addAction(content, "GOD MODE — FULL SECURITY AUDIT") { fullSecurityAudit() }
+        addAction(content, "ADVANCED WEBSITE + API SECURITY AUDIT") {
+            val target = hostInput.text.toString()
+            runCheck("ADVANCED WEBSITE + API SECURITY AUDIT") { AdvancedWebApiAudit.run(target) }
+        }
         addAction(content, "CHECK HTTP SECURITY HEADERS") { inspectHeaders() }
         addAction(content, "INSPECT HTTPS CERTIFICATE") { inspectCertificate() }
         addAction(content, "ADVANCED VULNERABILITY SCAN + CVE LOOKUP") { runBasicVulnerabilityScan() }
