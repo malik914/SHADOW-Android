@@ -109,12 +109,23 @@ class MainActivity : Activity() {
             val target = hostInput.text.toString()
             runCheck("ADVANCED WEBSITE + API SECURITY AUDIT") { AdvancedWebApiAudit.run(target) }
         }
+        addAction(content, "SAFE SQLi / XSS SIGNAL CHECK") {
+            android.app.AlertDialog.Builder(this)
+                .setTitle("Authorized test only")
+                .setMessage("This sends only two limited GET requests to the URL above, which must include an existing query parameter. It uses an inert text marker and a single quote to look for reflection or database error signals. Continue only if you own the system or have explicit permission.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("I am authorized") { _, _ ->
+                    val target = hostInput.text.toString()
+                    runCheck("SAFE SQLi / XSS SIGNAL CHECK") { AdvancedWebApiAudit.runSafeInputSignals(target) }
+                }
+                .show()
+        }
         addAction(content, "CHECK HTTP SECURITY HEADERS") { inspectHeaders() }
         addAction(content, "INSPECT HTTPS CERTIFICATE") { inspectCertificate() }
         addAction(content, "ADVANCED VULNERABILITY SCAN + CVE LOOKUP") { runBasicVulnerabilityScan() }
         addAction(content, "SAVE LAST SCAN AS PDF") { saveReportPdf() }
         addAction(content, "VIEW SCAN HISTORY") { showScanHistory() }
-        addAction(content, "ANALYZE APK PERMISSIONS") { chooseApk() }
+        addAction(content, "DEEP APK SECURITY ANALYSIS") { chooseApk() }
 
         output = TextView(this).apply {
             text = "Ready. Enter a host above and choose a check.\n\nOnly test systems you own or have permission to assess."
