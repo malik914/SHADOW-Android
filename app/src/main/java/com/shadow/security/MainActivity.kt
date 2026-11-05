@@ -83,7 +83,7 @@ class MainActivity : Activity() {
         portsInput = EditText(this).apply {
             hint = "TCP ports, comma-separated"
             setText("22,80,443,8080,8443")
-            singleLine = true
+            setSingleLine(true)
             setTextColor(0xFFFFFFFF.toInt())
             setHintTextColor(0xFF9AAAB5.toInt())
             setBackgroundColor(0xFF24323D.toInt())
