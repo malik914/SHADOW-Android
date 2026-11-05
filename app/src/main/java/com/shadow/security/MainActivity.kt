@@ -791,7 +791,7 @@ class MainActivity : Activity() {
                 activities.filter { it.exported }.forEach { add("Activity: ${it.name} | permission: ${it.permission ?: "none"}") }
                 services.filter { it.exported }.forEach { add("Service: ${it.name} | permission: ${it.permission ?: "none"}") }
                 receivers.filter { it.exported }.forEach { add("Receiver: ${it.name} | permission: ${it.permission ?: "none"}") }
-                providers.filter { it.exported }.forEach { add("Provider: ${it.name} | permission: ${it.readPermission ?: it.permission ?: "none"}") }
+                providers.filter { it.exported }.forEach { add("Provider: ${it.name} | read permission: ${it.readPermission ?: "none"} | write permission: ${it.writePermission ?: "none"}") }
             }
             val reviewPermissions = permissions.filter { it in setOf(
                 "android.permission.READ_CONTACTS", "android.permission.WRITE_CONTACTS",
