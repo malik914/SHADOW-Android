@@ -112,7 +112,7 @@ object AdvancedWebApiAudit {
             append("This module performs a single unauthenticated GET and a safe OPTIONS request to the exact URL supplied. ")
             append("It does not submit forms, alter data, guess credentials, fuzz parameters, or send SQL injection/XSS payloads. ")
             append("SQL injection, stored/reflected XSS, broken object authorization, and authenticated access-control flaws require ")
-            append a controlled test environment, test accounts, and explicitly supplied test cases; they are not claimed as tested here. ")
+            append("a controlled test environment, test accounts, and explicitly supplied test cases; they are not claimed as tested here. ")
             append("A successful response alone does not prove an authorization flaw. Only assess systems you own or are authorized to test.")
         }
     }
