@@ -120,6 +120,7 @@ class MainActivity : Activity() {
                 }
                 .show()
         }
+        addAction(content, "OTP SECURITY ASSESSMENT") { startOtpSecurityAssessment() }
         addAction(content, "CHECK HTTP SECURITY HEADERS") { inspectHeaders() }
         addAction(content, "INSPECT HTTPS CERTIFICATE") { inspectCertificate() }
         addAction(content, "ADVANCED VULNERABILITY SCAN + CVE LOOKUP") { runBasicVulnerabilityScan() }
@@ -188,6 +189,81 @@ class MainActivity : Activity() {
                 setResultText("ERROR\n\n${e.message ?: e.javaClass.simpleName}")
             }
         }
+    }
+
+    private fun startOtpSecurityAssessment() {
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Authorized OTP security review")
+            .setMessage(
+                "This is a manual checklist for an app or test environment you own or are authorized to assess. " +
+                "It sends no network requests and does not submit, read, or bypass OTP codes. " +
+                "Do not enter real OTPs, passwords, card details, or API secrets."
+            )
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Continue") { _, _ ->
+                val target = hostInput.text.toString().trim().ifBlank { "Not specified" }
+                val questions = listOf(
+                    "Is OTP verification enforced on the server, rather than trusted only to the app/UI?",
+                    "Does the server enforce a short OTP expiry time?",
+                    "Is each OTP single-use and invalidated after successful verification?",
+                    "Are repeated wrong attempts rate-limited with appropriate throttling or temporary lockout?",
+                    "Is the OTP bound to the correct account, login session, and transaction details (such as amount and recipient)?",
+                    "Are OTPs generated using a cryptographically secure, unpredictable method?"
+                )
+                val options = arrayOf("YES — confirmed", "NO — not implemented", "NOT SURE — unverified")
+                val answers = mutableListOf<String>()
+
+                fun askQuestion(index: Int) {
+                    if (index >= questions.size) {
+                        runCheck("OTP SECURITY AUDIT") {
+                            val yes = answers.count { it.startsWith("YES") }
+                            val no = answers.count { it.startsWith("NO") }
+                            val unknown = answers.count { it.startsWith("NOT SURE") }
+                            buildString {
+                                append("SHADOW — OTP SECURITY ASSESSMENT\n")
+                                append("Target / project: $target\n")
+                                append("Assessment type: Manual implementation checklist\n")
+                                append("Controls reviewed: \${questions.size}\n")
+                                append("Confirmed: $yes | Missing: $no | Unverified: $unknown\n\n")
+                                append("CONTROL RESULTS\n")
+                                questions.forEachIndexed { i, question ->
+                                    append("\${i + 1}. $question\n")
+                                    append("   Result: \${answers[i]}\n")
+                                    if (answers[i].startsWith("NO")) {
+                                        val severity = if (i == 0 || i == 4 || i == 5) "HIGH" else "MEDIUM"
+                                        append("   Finding: $severity — control reported as missing; investigate and remediate.\n")
+                                    } else if (answers[i].startsWith("NOT SURE")) {
+                                        append("   Finding: REVIEW — verify the implementation and server-side behavior.\n")
+                                    }
+                                }
+                                append("\nRECOMMENDATIONS\n")
+                                append("• Enforce OTP validation on the server; never trust a client-side success state.\n")
+                                append("• Enforce expiry and single-use atomically on the server.\n")
+                                append("• Apply per-account and per-challenge attempt limits, throttling, and monitoring.\n")
+                                append("• Bind OTP challenges to the intended account, session, and transaction details.\n")
+                                append("• Generate codes with a cryptographically secure random generator and protect delivery channels.\n")
+                                append("\nLIMITATIONS\n")
+                                append("This report is based only on the answers selected by the assessor. ")
+                                append("It performs no live endpoint testing, sends no OTPs, makes no payment requests, ")
+                                append("and does not prove that a control is effective. Validate controls in a dedicated ")
+                                append("authorized test environment with server-side evidence and test accounts.")
+                            }
+                        }
+                        return
+                    }
+                    android.app.AlertDialog.Builder(this)
+                        .setTitle("OTP SECURITY ASSESSMENT (\${index + 1}/\${questions.size})")
+                        .setMessage(questions[index])
+                        .setItems(options) { _, which ->
+                            answers.add(options[which])
+                            askQuestion(index + 1)
+                        }
+                        .setNegativeButton("Cancel", null)
+                        .show()
+                }
+                askQuestion(0)
+            }
+            .show()
     }
 
     private fun scanPorts() {
