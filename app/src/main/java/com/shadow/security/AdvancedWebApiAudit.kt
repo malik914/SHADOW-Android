@@ -59,14 +59,14 @@ object AdvancedWebApiAudit {
         )
         val matched = sqlErrors.filter { sql.second.contains(it, ignoreCase = true) }
         if (matched.isNotEmpty()) {
-            findings.add("REVIEW: Response contains database-error indicators (\${matched.distinct().joinToString()}). Confirm with server logs and a controlled test case; this is not proof of SQL injection.")
+            findings.add("REVIEW: Response contains database-error indicators (${matched.distinct().joinToString()}). Confirm with server logs and a controlled test case; this is not proof of SQL injection.")
         } else {
             findings.add("INFO: No common database-error indicators were found in the captured response.")
         }
         return buildString {
             append("SHADOW — SAFE SQLi/XSS SIGNAL CHECK\n")
             append("Target: $base\nParameter tested: $key\n")
-            append("XSS canary response: HTTP \${xss.first}\nSQL quote probe response: HTTP \${sql.first}\n\n")
+            append("XSS canary response: HTTP ${xss.first}\nSQL quote probe response: HTTP ${sql.first}\n\n")
             append("FINDINGS\n")
             append(findings.joinToString("\n"))
             append("\n\nLIMITATIONS\n")
