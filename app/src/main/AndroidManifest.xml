@@ -4,6 +4,7 @@
     <application
         android:theme="@android:style/Theme.Material.NoActionBar"
         android:label="SHADOW"
+        android:icon="@drawable/shadow_logo"
         android:usesCleartextTraffic="true"
         android:allowBackup="false"
         android:supportsRtl="true">
