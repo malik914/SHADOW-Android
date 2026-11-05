@@ -5,6 +5,9 @@ import android.content.Intent
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.graphics.Typeface
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.pdf.PdfDocument
 import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
@@ -19,6 +22,9 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.Socket
 import java.net.URL
+import java.net.URLEncoder
+import org.json.JSONArray
+import org.json.JSONObject
 import java.security.MessageDigest
 import java.security.cert.X509Certificate
 import javax.net.ssl.HttpsURLConnection
@@ -29,6 +35,9 @@ class MainActivity : Activity() {
     private lateinit var output: TextView
     private val worker = java.util.concurrent.Executors.newSingleThreadExecutor()
     private val pickApkRequest = 4102
+    private val savePdfRequest = 4103
+    @Volatile private var lastReport: String = ""
+    private var pendingPdfReport: String = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -86,7 +95,9 @@ class MainActivity : Activity() {
         addAction(content, "SCAN TCP PORTS") { scanPorts() }
         addAction(content, "CHECK HTTP SECURITY HEADERS") { inspectHeaders() }
         addAction(content, "INSPECT HTTPS CERTIFICATE") { inspectCertificate() }
-        addAction(content, "BASIC VULNERABILITY / CONFIGURATION SCAN") { runBasicVulnerabilityScan() }
+        addAction(content, "ADVANCED VULNERABILITY SCAN + CVE LOOKUP") { runBasicVulnerabilityScan() }
+        addAction(content, "SAVE LAST SCAN AS PDF") { saveReportPdf() }
+        addAction(content, "VIEW SCAN HISTORY") { showScanHistory() }
         addAction(content, "ANALYZE APK PERMISSIONS") { chooseApk() }
 
         output = TextView(this).apply {
@@ -140,7 +151,12 @@ class MainActivity : Activity() {
         setResultText("$label\n\nWorking…")
         worker.execute {
             try {
-                setResultText(task())
+                val result = task()
+                if (label.contains("SCAN", ignoreCase = true)) {
+                    lastReport = result
+                    saveScanHistory(label, result)
+                }
+                setResultText(result)
             } catch (e: Exception) {
                 setResultText("ERROR\n\n${e.message ?: e.javaClass.simpleName}")
             }
@@ -238,6 +254,7 @@ class MainActivity : Activity() {
                     val status = https.responseCode
                     checksPassed++
                     observations.add("HTTPS: reachable (HTTP $status); Android accepted the TLS certificate and hostname.")
+                    observations.add("Negotiated TLS cipher suite: ${https.cipherSuite}")
                     val cert = https.serverCertificates.firstOrNull() as? X509Certificate
                     if (cert != null) {
                         val now = java.util.Date()
@@ -289,6 +306,16 @@ class MainActivity : Activity() {
                     if (!server.isNullOrBlank()) findings.add("INFO: Server banner is disclosed: $server")
                     val powered = https.getHeaderField("X-Powered-By")
                     if (!powered.isNullOrBlank()) findings.add("INFO: X-Powered-By is disclosed: $powered")
+
+                    val banners = listOfNotNull(server, powered)
+                    val versioned = banners.filter { Regex("(?i)(\\d+\\.\\d+(?:\\.\\d+)?)").containsMatchIn(it) }
+                    if (versioned.isNotEmpty()) {
+                        observations.add("Software version banner(s) found: ${versioned.joinToString(" | ")}")
+                        val cveResults = lookupCveCandidates(versioned)
+                        if (cveResults.isNotBlank()) findings.add("REVIEW: Potential NVD CVE matches (verify product, version, and affected configuration):\\n$cveResults")
+                    } else {
+                        observations.add("No explicit software version was exposed in Server/X-Powered-By headers; CVE matching was skipped rather than guessing.")
+                    }
 
                     val cookies = https.headerFields.entries
                         .filter { it.key.equals("Set-Cookie", true) }
@@ -349,6 +376,140 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun lookupCveCandidates(banners: List<String>): String {
+        val results = linkedMapOf<String, String>()
+        for (banner in banners.distinct().take(2)) {
+            val query = URLEncoder.encode(banner.take(100), "UTF-8")
+            val url = URL("https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=$query&resultsPerPage=5")
+            val connection = url.openConnection() as HttpURLConnection
+            try {
+                connection.connectTimeout = 8000
+                connection.readTimeout = 10000
+                connection.setRequestProperty("User-Agent", "SHADOW-Android/1.0")
+                connection.setRequestProperty("Accept", "application/json")
+                if (connection.responseCode != 200) continue
+                val body = connection.inputStream.bufferedReader().use { it.readText() }
+                val items = JSONObject(body).optJSONArray("vulnerabilities") ?: JSONArray()
+                for (i in 0 until items.length()) {
+                    val cve = items.optJSONObject(i)?.optJSONObject("cve") ?: continue
+                    val id = cve.optString("id", "Unknown CVE")
+                    val descriptions = cve.optJSONArray("descriptions") ?: JSONArray()
+                    var description = ""
+                    for (j in 0 until descriptions.length()) {
+                        val item = descriptions.optJSONObject(j) ?: continue
+                        if (item.optString("lang") == "en") {
+                            description = item.optString("value")
+                            break
+                        }
+                    }
+                    val metrics = cve.optJSONObject("metrics")
+                    val severity = metrics?.optJSONArray("cvssMetricV31")
+                        ?.optJSONObject(0)?.optJSONObject("cvssData")?.optString("baseSeverity")
+                        ?: metrics?.optJSONArray("cvssMetricV30")
+                            ?.optJSONObject(0)?.optJSONObject("cvssData")?.optString("baseSeverity")
+                        ?: "Not supplied"
+                    results[id] = "$id [$severity] — ${description.take(220)}"
+                }
+            } catch (_: Exception) {
+                // CVE lookup is supplemental; the main configuration scan still completes.
+            } finally {
+                connection.disconnect()
+            }
+        }
+        return results.values.take(8).joinToString("\\n")
+    }
+
+    private fun saveScanHistory(label: String, report: String) {
+        try {
+            val prefs = getSharedPreferences("shadow_scan_history", MODE_PRIVATE)
+            val old = try { JSONArray(prefs.getString("items", "[]")) } catch (_: Exception) { JSONArray() }
+            val next = JSONArray()
+            next.put(JSONObject().put("date", System.currentTimeMillis()).put("label", label).put("report", report))
+            for (i in 0 until minOf(old.length(), 9)) next.put(old.getJSONObject(i))
+            prefs.edit().putString("items", next.toString()).apply()
+        } catch (_: Exception) { }
+    }
+
+    private fun showScanHistory() {
+        val prefs = getSharedPreferences("shadow_scan_history", MODE_PRIVATE)
+        val items = try { JSONArray(prefs.getString("items", "[]")) } catch (_: Exception) { JSONArray() }
+        if (items.length() == 0) {
+            setResultText("SCAN HISTORY\\n\\nNo saved scans yet. Run a vulnerability scan first.")
+            return
+        }
+        val text = buildString {
+            append("SCAN HISTORY — latest 10\\n\\n")
+            for (i in 0 until items.length()) {
+                val item = items.optJSONObject(i) ?: continue
+                val date = java.text.DateFormat.getDateTimeInstance().format(java.util.Date(item.optLong("date")))
+                append("${i + 1}. $date\\n")
+                append(item.optString("label")).append("\\n")
+                append(item.optString("report").take(450)).append("\\n\\n--------------------\\n\\n")
+            }
+        }
+        setResultText(text)
+    }
+
+    private fun saveReportPdf() {
+        if (lastReport.isBlank()) {
+            setResultText("Run a vulnerability scan before exporting a PDF report.")
+            return
+        }
+        pendingPdfReport = lastReport
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/pdf"
+            putExtra(Intent.EXTRA_TITLE, "SHADOW-security-report.pdf")
+        }
+        startActivityForResult(intent, savePdfRequest)
+    }
+
+    private fun writePdf(uri: Uri, report: String) {
+        val document = android.graphics.pdf.PdfDocument()
+        val paint = Paint().apply { textSize = 10f; color = android.graphics.Color.BLACK }
+        val pageWidth = 595
+        val pageHeight = 842
+        val margin = 40f
+        val lineHeight = 15f
+        val lines = mutableListOf<String>()
+        for (paragraph in report.split("\\n")) {
+            if (paragraph.isEmpty()) { lines.add(""); continue }
+            var remaining = paragraph
+            while (paint.measureText(remaining) > pageWidth - margin * 2) {
+                var cut = remaining.length.coerceAtMost(90)
+                while (cut > 1 && paint.measureText(remaining.substring(0, cut)) > pageWidth - margin * 2) cut--
+                lines.add(remaining.substring(0, cut))
+                remaining = remaining.substring(cut)
+            }
+            lines.add(remaining)
+        }
+        var pageNumber = 1
+        var page = document.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create())
+        var canvas: Canvas = page.canvas
+        var y = margin
+        canvas.drawText("SHADOW — SECURITY ASSESSMENT", margin, y, paint)
+        y += lineHeight * 2
+        for (line in lines) {
+            if (y > pageHeight - margin) {
+                document.finishPage(page)
+                pageNumber++
+                page = document.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create())
+                canvas = page.canvas
+                y = margin
+            }
+            canvas.drawText(line.take(110), margin, y, paint)
+            y += lineHeight
+        }
+        document.finishPage(page)
+        try {
+            contentResolver.openOutputStream(uri)?.use { document.writeTo(it) }
+                ?: error("Could not create the PDF file.")
+            setResultText("PDF report saved successfully.")
+        } finally {
+            document.close()
+        }
+    }
+
     private fun inspectCertificate() {
         val host = try { targetHost() } catch (e: Exception) {
             setResultText(e.message ?: "Invalid host"); return
@@ -386,8 +547,14 @@ class MainActivity : Activity() {
     @Deprecated("Deprecated by Android, retained for broad API compatibility")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != pickApkRequest || resultCode != RESULT_OK) return
+        if (resultCode != RESULT_OK) return
         val uri: Uri = data?.data ?: return
+        if (requestCode == savePdfRequest) {
+            try { writePdf(uri, pendingPdfReport) }
+            catch (e: Exception) { setResultText("PDF export failed: ${e.message ?: e.javaClass.simpleName}") }
+            return
+        }
+        if (requestCode != pickApkRequest) return
         runCheck("APK PERMISSION INVENTORY") {
             val temp = File(cacheDir, "selected-analysis.apk")
             contentResolver.openInputStream(uri).use { input ->
