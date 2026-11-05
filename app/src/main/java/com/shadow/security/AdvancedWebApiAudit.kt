@@ -8,6 +8,74 @@ import java.net.URL
  * No injection payloads, authentication guessing, fuzzing, or state-changing requests.
  */
 object AdvancedWebApiAudit {
+    /**
+     * Limited input-validation signal check for an explicitly authorized test URL.
+     * Requires an existing query parameter; sends only two GET probes and never submits forms.
+     * The XSS canary is inert text, not executable markup or JavaScript.
+     */
+    fun runSafeInputSignals(rawTarget: String): String {
+        val raw = rawTarget.trim()
+        require(raw.isNotBlank()) { "Enter an authorized test URL." }
+        val base = URL(if (raw.startsWith("http://", true) || raw.startsWith("https://", true)) raw else "https://$raw")
+        require(base.protocol == "https" || base.protocol == "http") { "Only HTTP/HTTPS URLs are supported." }
+        val query = base.query ?: error("Add a test query parameter to the URL, for example ?q=test. No parameter was guessed.")
+        val first = query.substringBefore("&")
+        val key = first.substringBefore("=").ifBlank { error("The URL must contain a named query parameter.") }
+        val value = first.substringAfter("=", "")
+        val marker = "SHADOW_XSS_CANARY_7F31A9"
+        fun buildUrl(replacement: String): URL {
+            val changed = key + "=" + java.net.URLEncoder.encode(replacement, "UTF-8")
+            val rest = query.substringAfter("&", "")
+            val newQuery = if (rest.isBlank()) changed else "$changed&$rest"
+            return URL(base.protocol, base.host, base.port, base.path + "?" + newQuery + (base.ref?.let { "#$it" } ?: ""))
+        }
+        fun fetch(target: URL): Pair<Int, String> {
+            val connection = target.openConnection() as HttpURLConnection
+            try {
+                connection.requestMethod = "GET"
+                connection.connectTimeout = 6000
+                connection.readTimeout = 6000
+                connection.instanceFollowRedirects = false
+                connection.setRequestProperty("User-Agent", "SHADOW-Android/2.1 (authorized-safe-input-check)")
+                val status = connection.responseCode
+                val stream = if (status >= 400) connection.errorStream else connection.inputStream
+                val body = stream?.bufferedReader()?.use { it.readText().take(262144) } ?: ""
+                return status to body
+            } finally {
+                connection.disconnect()
+            }
+        }
+        val xss = fetch(buildUrl(value + marker))
+        val sql = fetch(buildUrl(value + "'"))
+        val findings = mutableListOf<String>()
+        if (xss.second.contains(marker)) {
+            findings.add("REVIEW: Inert XSS canary was reflected in the response. Inspect HTML context and output encoding manually; reflection alone is not proof of executable XSS.")
+        } else {
+            findings.add("INFO: Inert XSS canary was not found in the captured response body.")
+        }
+        val sqlErrors = listOf(
+            "sql syntax", "mysql_fetch", "mysqli_", "postgresql", "sqlite error",
+            "odbc sql", "unclosed quotation", "sqlstate", "syntax error"
+        )
+        val matched = sqlErrors.filter { sql.second.contains(it, ignoreCase = true) }
+        if (matched.isNotEmpty()) {
+            findings.add("REVIEW: Response contains database-error indicators (\${matched.distinct().joinToString()}). Confirm with server logs and a controlled test case; this is not proof of SQL injection.")
+        } else {
+            findings.add("INFO: No common database-error indicators were found in the captured response.")
+        }
+        return buildString {
+            append("SHADOW — SAFE SQLi/XSS SIGNAL CHECK\n")
+            append("Target: $base\nParameter tested: $key\n")
+            append("XSS canary response: HTTP \${xss.first}\nSQL quote probe response: HTTP \${sql.first}\n\n")
+            append("FINDINGS\n")
+            append(findings.joinToString("\n"))
+            append("\n\nLIMITATIONS\n")
+            append("Two GET requests only; no forms, scripts, destructive payloads, time delays, authentication bypass, or data modification. ")
+            append("The test checks one existing query parameter and can miss vulnerabilities. No finding does not mean the endpoint is secure. ")
+            append("Only run against systems you own or have explicit permission to test.")
+        }
+    }
+
     fun run(rawTarget: String): String {
         val raw = rawTarget.trim()
         require(raw.isNotBlank()) { "Enter an authorized website or API URL." }
