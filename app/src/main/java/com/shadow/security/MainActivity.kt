@@ -15,6 +15,7 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ImageView
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -52,6 +53,15 @@ class MainActivity : Activity() {
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
+
+        val logo = ImageView(this).apply {
+            setImageResource(R.drawable.shadow_logo)
+            contentDescription = "SHADOW shield logo"
+            scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+        }
+        val logoParams = LinearLayout.LayoutParams(88, 88)
+        logoParams.gravity = Gravity.CENTER
+        content.addView(logo, logoParams)
 
         val title = TextView(this).apply {
             text = "SHADOW"
