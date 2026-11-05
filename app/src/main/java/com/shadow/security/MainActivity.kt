@@ -93,6 +93,7 @@ class MainActivity : Activity() {
         content.addView(portsInput, portParams)
 
         addAction(content, "SCAN TCP PORTS") { scanPorts() }
+        addAction(content, "GOD MODE — FULL SECURITY AUDIT") { fullSecurityAudit() }
         addAction(content, "CHECK HTTP SECURITY HEADERS") { inspectHeaders() }
         addAction(content, "INSPECT HTTPS CERTIFICATE") { inspectCertificate() }
         addAction(content, "ADVANCED VULNERABILITY SCAN + CVE LOOKUP") { runBasicVulnerabilityScan() }
@@ -373,6 +374,197 @@ class MainActivity : Activity() {
                 "test application logic, enumerate hidden paths, or identify every CVE. Header findings are recommendations, " +
                 "not proof of exploitability. Some checks depend on the server response to this single request. " +
                 "Only scan systems you own or are explicitly authorized to assess."
+        }
+    }
+
+    // Comprehensive, low-impact audit: DNS, selected TCP ports, HTTP posture, and TLS metadata.
+    // This does not exploit services, brute-force credentials, or crawl hidden paths.
+    private fun fullSecurityAudit() {
+        val host = try { targetHost() } catch (e: Exception) {
+            setResultText(e.message ?: "Invalid host"); return
+        }
+        val requestedPorts = try {
+            portsInput.text.toString().split(",").map { it.trim().toInt() }.distinct()
+        } catch (_: Exception) {
+            setResultText("Enter comma-separated TCP ports, for example 22,80,443,8080."); return
+        }
+        if (requestedPorts.isEmpty() || requestedPorts.size > 128 ||
+            requestedPorts.any { it !in 1..65535 }) {
+            setResultText("GOD MODE accepts 1–128 valid TCP ports per audit (1–65535)."); return
+        }
+
+        runCheck("GOD MODE FULL SECURITY AUDIT • $host") {
+            val findings = mutableListOf<String>()
+            val observations = mutableListOf<String>()
+            var score = 100
+            fun finding(level: String, message: String, penalty: Int) {
+                findings.add("$level: $message")
+                score = (score - penalty).coerceAtLeast(0)
+            }
+
+            // DNS resolution
+            try {
+                val addresses = java.net.InetAddress.getAllByName(host)
+                observations.add("DNS addresses: " + addresses.map { it.hostAddress }.distinct().joinToString(", "))
+            } catch (e: Exception) {
+                finding("REVIEW", "DNS resolution failed: ${e.message ?: e.javaClass.simpleName}", 15)
+            }
+
+            // Bounded parallel TCP connect checks. Results are reachability signals, not vulnerability proof.
+            val pool = java.util.concurrent.Executors.newFixedThreadPool(8)
+            val portResults = try {
+                val tasks = requestedPorts.map { port ->
+                    java.util.concurrent.Callable {
+                        val started = System.nanoTime()
+                        val state = try {
+                            Socket().use { socket ->
+                                socket.connect(java.net.InetSocketAddress(host, port), 900)
+                            }
+                            "OPEN"
+                        } catch (_: Exception) { "closed/filtered" }
+                        val elapsed = (System.nanoTime() - started) / 1_000_000
+                        Triple(port, state, elapsed)
+                    }
+                }
+                pool.invokeAll(tasks).mapNotNull { future ->
+                    try { future.get() } catch (_: Exception) { null }
+                }.sortedBy { it.first }
+            } finally {
+                pool.shutdownNow()
+            }
+            val openPorts = portResults.filter { it.second == "OPEN" }
+            observations.add("TCP ports checked: ${portResults.size}; open: ${openPorts.size}")
+            observations.add("TCP results: " + portResults.joinToString(" | ") { (port, state, ms) ->
+                val service = mapOf(
+                    21 to "FTP", 22 to "SSH", 23 to "Telnet", 25 to "SMTP",
+                    53 to "DNS", 80 to "HTTP", 110 to "POP3", 143 to "IMAP",
+                    443 to "HTTPS", 445 to "SMB", 3306 to "MySQL", 3389 to "RDP",
+                    5432 to "PostgreSQL", 6379 to "Redis", 8080 to "HTTP-alt",
+                    8443 to "HTTPS-alt", 27017 to "MongoDB"
+                )[port] ?: "unknown service"
+                "$port/tcp $state ($service, ${ms}ms)"
+            })
+            if (openPorts.any { it.first in setOf(23, 21, 445, 3389, 6379, 27017) }) {
+                finding("REVIEW", "One or more commonly sensitive services are reachable. Confirm they are intentionally exposed and access-controlled.", 8)
+            }
+
+            // HTTPS configuration and certificate checks
+            try {
+                val https = URL("https://$host").openConnection() as HttpsURLConnection
+                try {
+                    https.connectTimeout = 8000
+                    https.readTimeout = 8000
+                    https.instanceFollowRedirects = false
+                    https.setRequestProperty("User-Agent", "SHADOW-Android/2.0")
+                    val status = https.responseCode
+                    observations.add("HTTPS response: HTTP $status")
+                    observations.add("TLS cipher suite: ${https.cipherSuite}")
+                    val cert = https.serverCertificates.firstOrNull() as? X509Certificate
+                    if (cert != null) {
+                        val now = java.util.Date()
+                        val days = (cert.notAfter.time - now.time) / 86400000L
+                        observations.add("Certificate subject: ${cert.subjectX500Principal.name}")
+                        observations.add("Certificate issuer: ${cert.issuerX500Principal.name}")
+                        observations.add("Certificate validity: ${cert.notBefore} to ${cert.notAfter}")
+                        observations.add("Certificate expires in: $days days")
+                        if (now.after(cert.notAfter)) finding("HIGH", "TLS certificate is expired.", 30)
+                        else if (days <= 30) finding("MEDIUM", "TLS certificate expires within 30 days.", 12)
+                    }
+                    val checks = listOf(
+                        "Strict-Transport-Security" to 12,
+                        "Content-Security-Policy" to 10,
+                        "X-Content-Type-Options" to 5,
+                        "Referrer-Policy" to 3,
+                        "Permissions-Policy" to 3
+                    )
+                    for ((header, penalty) in checks) {
+                        if (https.getHeaderField(header).isNullOrBlank()) {
+                            finding("LOW", "$header is missing from the HTTPS response.", penalty)
+                        } else {
+                            observations.add("$header: present")
+                        }
+                    }
+                    val server = https.getHeaderField("Server")
+                    if (!server.isNullOrBlank()) {
+                        finding("INFO", "Server banner is disclosed: $server", 0)
+                    }
+                    val powered = https.getHeaderField("X-Powered-By")
+                    if (!powered.isNullOrBlank()) {
+                        finding("INFO", "X-Powered-By is disclosed: $powered", 0)
+                    }
+                    val cookies = https.headerFields.entries
+                        .filter { it.key.equals("Set-Cookie", true) }
+                        .flatMap { it.value ?: emptyList() }
+                    for (cookie in cookies) {
+                        val name = cookie.substringBefore("=").ifBlank { "(unnamed)" }
+                        if (!cookie.contains("; Secure", true)) finding("LOW", "Cookie '$name' lacks Secure.", 3)
+                        if (!cookie.contains("; HttpOnly", true)) finding("LOW", "Cookie '$name' lacks HttpOnly.", 3)
+                        if (!Regex(";\\s*SameSite\\s*=", RegexOption.IGNORE_CASE).containsMatchIn(cookie)) {
+                            finding("LOW", "Cookie '$name' does not specify SameSite.", 3)
+                        }
+                    }
+                    if (cookies.isNotEmpty()) observations.add("Set-Cookie headers inspected: ${cookies.size}")
+                } finally {
+                    https.disconnect()
+                }
+            } catch (e: Exception) {
+                finding("REVIEW", "HTTPS/TLS inspection could not complete: ${e.message ?: e.javaClass.simpleName}", 10)
+            }
+
+            // HTTP-to-HTTPS redirect and safe OPTIONS method discovery
+            try {
+                val http = URL("http://$host").openConnection() as HttpURLConnection
+                try {
+                    http.connectTimeout = 7000
+                    http.readTimeout = 7000
+                    http.instanceFollowRedirects = false
+                    http.setRequestProperty("User-Agent", "SHADOW-Android/2.0")
+                    val status = http.responseCode
+                    val location = http.getHeaderField("Location")
+                    if (status in 300..399 && location?.startsWith("https://", true) == true) {
+                        observations.add("HTTP redirects to HTTPS (HTTP $status).")
+                    } else {
+                        finding("MEDIUM", "HTTP endpoint did not issue a direct HTTPS redirect (HTTP $status).", 8)
+                    }
+                } finally { http.disconnect() }
+            } catch (e: Exception) {
+                observations.add("HTTP endpoint not reachable or not configured: ${e.message ?: e.javaClass.simpleName}")
+            }
+
+            try {
+                val options = URL("https://$host").openConnection() as HttpURLConnection
+                try {
+                    options.requestMethod = "OPTIONS"
+                    options.connectTimeout = 6000
+                    options.readTimeout = 6000
+                    options.setRequestProperty("User-Agent", "SHADOW-Android/2.0")
+                    val status = options.responseCode
+                    observations.add("Safe OPTIONS probe: HTTP $status; Allow: ${options.getHeaderField("Allow") ?: "not supplied"}")
+                } finally { options.disconnect() }
+            } catch (e: Exception) {
+                observations.add("OPTIONS method check unavailable: ${e.message ?: e.javaClass.simpleName}")
+            }
+
+            val high = findings.count { it.startsWith("HIGH:") }
+            val medium = findings.count { it.startsWith("MEDIUM:") }
+            val low = findings.count { it.startsWith("LOW:") }
+            val info = findings.count { it.startsWith("INFO:") }
+            val grade = when {
+                high > 0 -> "CRITICAL REVIEW REQUIRED"
+                score >= 90 -> "A — STRONG OBSERVED CONFIGURATION"
+                score >= 75 -> "B — GOOD, IMPROVEMENTS AVAILABLE"
+                score >= 55 -> "C — NEEDS HARDENING"
+                else -> "D — SIGNIFICANT REVIEW REQUIRED"
+            }
+            "SHADOW GOD MODE — FULL SECURITY AUDIT\nTarget: $host\n" +
+                "OBSERVATION SCORE: $score/100\nGRADE: $grade\n" +
+                "Findings: HIGH $high | MEDIUM $medium | LOW $low | INFO $info\n\n" +
+                "FINDINGS\n" + (if (findings.isEmpty()) "No issues detected by the checks that completed." else findings.joinToString("\n")) +
+                "\n\nTECHNICAL OBSERVATIONS\n" + observations.joinToString("\n") +
+                "\n\nIMPORTANT LIMITATIONS\nThe score is a heuristic summary of observed checks, not a certification or proof of security. " +
+                "Port names are common associations, not verified service fingerprints. No exploit, credential test, stealth scan, " +
+                "directory brute force, or intrusive payload was sent. Results can be affected by firewalls, CDN/WAF behavior, " +
+                "DNS, rate limits, and server configuration. Test only systems you own or are explicitly authorized to assess."
         }
     }
 
