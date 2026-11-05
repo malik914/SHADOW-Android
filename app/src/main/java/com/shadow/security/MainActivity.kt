@@ -312,7 +312,7 @@ class MainActivity : Activity() {
                     if (versioned.isNotEmpty()) {
                         observations.add("Software version banner(s) found: ${versioned.joinToString(" | ")}")
                         val cveResults = lookupCveCandidates(versioned)
-                        if (cveResults.isNotBlank()) findings.add("REVIEW: Potential NVD CVE matches (verify product, version, and affected configuration):\\n$cveResults")
+                        if (cveResults.isNotBlank()) findings.add("REVIEW: Potential NVD CVE matches (verify product, version, and affected configuration):\n$cveResults")
                     } else {
                         observations.add("No explicit software version was exposed in Server/X-Powered-By headers; CVE matching was skipped rather than guessing.")
                     }
@@ -364,12 +364,12 @@ class MainActivity : Activity() {
             val low = findings.count { it.startsWith("LOW:") }
             val info = findings.count { it.startsWith("INFO:") }
             val report = if (findings.isEmpty()) "No findings from the checks that completed."
-                else findings.joinToString("\\n")
-            "SHADOW SCAN REPORT\\nTarget: $host\\nChecks completed: $checksPassed\\n" +
-                "Findings: HIGH $high | MEDIUM $medium | LOW $low | INFO $info\\n\\n" +
-                report + "\\n\\nOBSERVATIONS\\n" +
-                (if (observations.isEmpty()) "No additional observations." else observations.joinToString("\\n")) +
-                "\\n\\nSCOPE & LIMITATIONS\\nThis is a non-intrusive configuration review. It does not exploit systems, " +
+                else findings.joinToString("\n")
+            "SHADOW SCAN REPORT\nTarget: $host\nChecks completed: $checksPassed\n" +
+                "Findings: HIGH $high | MEDIUM $medium | LOW $low | INFO $info\n\n" +
+                report + "\n\nOBSERVATIONS\n" +
+                (if (observations.isEmpty()) "No additional observations." else observations.joinToString("\n")) +
+                "\n\nSCOPE & LIMITATIONS\nThis is a non-intrusive configuration review. It does not exploit systems, " +
                 "test application logic, enumerate hidden paths, or identify every CVE. Header findings are recommendations, " +
                 "not proof of exploitability. Some checks depend on the server response to this single request. " +
                 "Only scan systems you own or are explicitly authorized to assess."
@@ -416,7 +416,7 @@ class MainActivity : Activity() {
                 connection.disconnect()
             }
         }
-        return results.values.take(8).joinToString("\\n")
+        return results.values.take(8).joinToString("\n")
     }
 
     private fun saveScanHistory(label: String, report: String) {
@@ -434,17 +434,17 @@ class MainActivity : Activity() {
         val prefs = getSharedPreferences("shadow_scan_history", MODE_PRIVATE)
         val items = try { JSONArray(prefs.getString("items", "[]")) } catch (_: Exception) { JSONArray() }
         if (items.length() == 0) {
-            setResultText("SCAN HISTORY\\n\\nNo saved scans yet. Run a vulnerability scan first.")
+            setResultText("SCAN HISTORY\n\nNo saved scans yet. Run a vulnerability scan first.")
             return
         }
         val text = buildString {
-            append("SCAN HISTORY — latest 10\\n\\n")
+            append("SCAN HISTORY — latest 10\n\n")
             for (i in 0 until items.length()) {
                 val item = items.optJSONObject(i) ?: continue
                 val date = java.text.DateFormat.getDateTimeInstance().format(java.util.Date(item.optLong("date")))
-                append("${i + 1}. $date\\n")
-                append(item.optString("label")).append("\\n")
-                append(item.optString("report").take(450)).append("\\n\\n--------------------\\n\\n")
+                append("${i + 1}. $date\n")
+                append(item.optString("label")).append("\n")
+                append(item.optString("report").take(450)).append("\n\n--------------------\n\n")
             }
         }
         setResultText(text)
@@ -472,7 +472,7 @@ class MainActivity : Activity() {
         val margin = 40f
         val lineHeight = 15f
         val lines = mutableListOf<String>()
-        for (paragraph in report.split("\\n")) {
+        for (paragraph in report.split("\n")) {
             if (paragraph.isEmpty()) { lines.add(""); continue }
             var remaining = paragraph
             while (paint.measureText(remaining) > pageWidth - margin * 2) {
