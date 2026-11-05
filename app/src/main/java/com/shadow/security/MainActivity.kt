@@ -210,85 +210,142 @@ class MainActivity : Activity() {
     }
 
 
-    // Passive configuration checks only: no exploit payloads, brute force, or intrusive probes.
+    // Safe, low-impact checks only. No exploitation, brute force, or hidden probing.
     private fun runBasicVulnerabilityScan() {
         val host = try { targetHost() } catch (e: Exception) {
             setResultText(e.message ?: "Invalid host"); return
         }
-        runCheck("BASIC VULNERABILITY / CONFIGURATION SCAN  •  $host") {
+        runCheck("VULNERABILITY & SECURITY CONFIGURATION SCAN  •  $host") {
             val findings = mutableListOf<String>()
-            val notes = mutableListOf<String>()
-            var httpsOk = false
+            val observations = mutableListOf<String>()
+            var checksPassed = 0
 
             try {
-                val secure = URL("https://$host").openConnection() as HttpsURLConnection
-                try {
-                    secure.connectTimeout = 7000
-                    secure.readTimeout = 7000
-                    secure.instanceFollowRedirects = false
-                    secure.setRequestProperty("User-Agent", "SHADOW-Android/1.0")
-                    val status = secure.responseCode
-                    httpsOk = true
-                    notes.add("HTTPS endpoint responded with HTTP $status.")
+                val addresses = java.net.InetAddress.getAllByName(host)
+                observations.add("DNS: resolved to " + addresses.joinToString { it.hostAddress })
+                checksPassed++
+            } catch (e: Exception) {
+                findings.add("REVIEW: DNS lookup failed: ${e.message ?: e.javaClass.simpleName}")
+            }
 
-                    val checks = listOf(
-                        "Strict-Transport-Security" to "HSTS",
-                        "Content-Security-Policy" to "Content Security Policy",
+            try {
+                val https = URL("https://$host").openConnection() as HttpsURLConnection
+                try {
+                    https.connectTimeout = 7000
+                    https.readTimeout = 7000
+                    https.instanceFollowRedirects = false
+                    https.setRequestProperty("User-Agent", "SHADOW-Android/1.0")
+                    val status = https.responseCode
+                    checksPassed++
+                    observations.add("HTTPS: reachable (HTTP $status); Android accepted the TLS certificate and hostname.")
+                    val cert = https.serverCertificates.firstOrNull() as? X509Certificate
+                    if (cert != null) {
+                        val now = java.util.Date()
+                        val daysLeft = ((cert.notAfter.time - now.time) / 86400000L)
+                        observations.add("TLS certificate expires: ${cert.notAfter} (${daysLeft} days remaining).")
+                        if (now.after(cert.notAfter)) findings.add("HIGH: TLS certificate is expired.")
+                        else if (daysLeft <= 30) findings.add("MEDIUM: TLS certificate expires within 30 days.")
+                        if (now.before(cert.notBefore)) findings.add("HIGH: TLS certificate is not valid yet.")
+                    }
+
+                    val hsts = https.getHeaderField("Strict-Transport-Security")
+                    if (hsts.isNullOrBlank()) {
+                        findings.add("MEDIUM: HSTS header is missing on the HTTPS response.")
+                    } else {
+                        val maxAge = Regex("max-age\\s*=\\s*(\\d+)", RegexOption.IGNORE_CASE)
+                            .find(hsts)?.groupValues?.getOrNull(1)?.toLongOrNull()
+                        if (maxAge == null || maxAge < 15552000L) {
+                            findings.add("LOW: HSTS max-age is missing or shorter than 180 days.")
+                        }
+                        if (!hsts.contains("includeSubDomains", true)) {
+                            observations.add("HSTS does not include subdomains.")
+                        }
+                    }
+
+                    val csp = https.getHeaderField("Content-Security-Policy")
+                    if (csp.isNullOrBlank()) findings.add("LOW: Content-Security-Policy header is missing.")
+                    else if (csp.contains("unsafe-inline", true) || csp.contains("unsafe-eval", true)) {
+                        findings.add("LOW: CSP contains unsafe-inline or unsafe-eval; review whether these are necessary.")
+                    }
+
+                    val headerChecks = listOf(
                         "X-Content-Type-Options" to "MIME sniffing protection",
                         "X-Frame-Options" to "Clickjacking protection",
                         "Referrer-Policy" to "Referrer policy",
                         "Permissions-Policy" to "Browser permissions policy"
                     )
-                    for ((header, label) in checks) {
-                        if (secure.getHeaderField(header).isNullOrBlank()) {
-                            findings.add("LOW: $label header is not present.")
+                    for ((header, label) in headerChecks) {
+                        if (https.getHeaderField(header).isNullOrBlank()) {
+                            findings.add("LOW: $label header is missing.")
                         }
                     }
+                    val xfo = https.getHeaderField("X-Frame-Options")
+                    if (!xfo.isNullOrBlank() && !xfo.equals("DENY", true) &&
+                        !xfo.equals("SAMEORIGIN", true)) {
+                        observations.add("X-Frame-Options value may need review: $xfo")
+                    }
 
-                    val server = secure.getHeaderField("Server")
-                    val powered = secure.getHeaderField("X-Powered-By")
-                    if (!server.isNullOrBlank()) notes.add("Server header is disclosed: $server")
-                    if (!powered.isNullOrBlank()) findings.add("INFO: X-Powered-By discloses: $powered")
+                    val server = https.getHeaderField("Server")
+                    if (!server.isNullOrBlank()) findings.add("INFO: Server banner is disclosed: $server")
+                    val powered = https.getHeaderField("X-Powered-By")
+                    if (!powered.isNullOrBlank()) findings.add("INFO: X-Powered-By is disclosed: $powered")
+
+                    val cookies = https.headerFields.entries
+                        .filter { it.key.equals("Set-Cookie", true) }
+                        .flatMap { it.value ?: emptyList() }
+                    for (cookie in cookies) {
+                        val name = cookie.substringBefore("=").ifBlank { "(unnamed)" }
+                        if (!cookie.contains("; Secure", true)) findings.add("LOW: Cookie '$name' lacks Secure.")
+                        if (!cookie.contains("; HttpOnly", true)) findings.add("LOW: Cookie '$name' lacks HttpOnly.")
+                        if (!Regex(";\\s*SameSite\\s*=", RegexOption.IGNORE_CASE).containsMatchIn(cookie)) {
+                            findings.add("LOW: Cookie '$name' does not specify SameSite.")
+                        }
+                    }
+                    if (cookies.isEmpty()) observations.add("No Set-Cookie headers were returned on this response.")
                 } finally {
-                    secure.disconnect()
+                    https.disconnect()
                 }
             } catch (e: Exception) {
-                findings.add("REVIEW: HTTPS check failed: ${e.message ?: e.javaClass.simpleName}")
+                findings.add("REVIEW: HTTPS/TLS check failed: ${e.message ?: e.javaClass.simpleName}")
             }
 
             try {
-                val plain = URL("http://$host").openConnection() as HttpURLConnection
+                val http = URL("http://$host").openConnection() as HttpURLConnection
                 try {
-                    plain.connectTimeout = 7000
-                    plain.readTimeout = 7000
-                    plain.instanceFollowRedirects = false
-                    plain.setRequestProperty("User-Agent", "SHADOW-Android/1.0")
-                    val status = plain.responseCode
-                    val location = plain.getHeaderField("Location")
+                    http.connectTimeout = 7000
+                    http.readTimeout = 7000
+                    http.instanceFollowRedirects = false
+                    http.setRequestProperty("User-Agent", "SHADOW-Android/1.0")
+                    val status = http.responseCode
+                    val location = http.getHeaderField("Location")
                     if (status in 300..399 && !location.isNullOrBlank() &&
                         location.startsWith("https://", ignoreCase = true)) {
-                        notes.add("HTTP redirects to HTTPS.")
+                        observations.add("HTTP: redirects to HTTPS (status $status).")
+                        checksPassed++
                     } else {
-                        findings.add("MEDIUM: HTTP did not clearly redirect to HTTPS (status $status).")
+                        findings.add("MEDIUM: HTTP did not return a direct HTTPS redirect (status $status).")
                     }
                 } finally {
-                    plain.disconnect()
+                    http.disconnect()
                 }
             } catch (e: Exception) {
-                notes.add("HTTP check could not complete: ${e.message ?: e.javaClass.simpleName}")
+                observations.add("HTTP endpoint could not be checked: ${e.message ?: e.javaClass.simpleName}")
             }
 
-            val summary = if (findings.isEmpty()) {
-                "No issues were detected by these limited checks."
-            } else {
-                "Findings (${findings.size}):\n" + findings.joinToString("\n")
-            }
-            "BASIC SCAN RESULTS\nTarget: $host\nHTTPS reachable: $httpsOk\n\n" +
-                summary + "\n\nObservations:\n" +
-                (if (notes.isEmpty()) "No additional observations." else notes.joinToString("\n")) +
-                "\n\nIMPORTANT: This is a passive, limited configuration review—not a full vulnerability assessment. " +
-                "Missing headers or HTTP behavior do not by themselves prove an exploitable vulnerability. " +
-                "Only scan systems you own or are authorized to test."
+            val high = findings.count { it.startsWith("HIGH:") }
+            val medium = findings.count { it.startsWith("MEDIUM:") }
+            val low = findings.count { it.startsWith("LOW:") }
+            val info = findings.count { it.startsWith("INFO:") }
+            val report = if (findings.isEmpty()) "No findings from the checks that completed."
+                else findings.joinToString("\\n")
+            "SHADOW SCAN REPORT\\nTarget: $host\\nChecks completed: $checksPassed\\n" +
+                "Findings: HIGH $high | MEDIUM $medium | LOW $low | INFO $info\\n\\n" +
+                report + "\\n\\nOBSERVATIONS\\n" +
+                (if (observations.isEmpty()) "No additional observations." else observations.joinToString("\\n")) +
+                "\\n\\nSCOPE & LIMITATIONS\\nThis is a non-intrusive configuration review. It does not exploit systems, " +
+                "test application logic, enumerate hidden paths, or identify every CVE. Header findings are recommendations, " +
+                "not proof of exploitability. Some checks depend on the server response to this single request. " +
+                "Only scan systems you own or are explicitly authorized to assess."
         }
     }
 
@@ -342,9 +399,9 @@ class MainActivity : Activity() {
             val permissions = info.requestedPermissions?.toList().orEmpty()
             "APK ANALYSIS\nPackage: ${info.packageName}\nVersion: ${info.versionName ?: "unknown"}\n" +
                 "Requested permissions: ${permissions.size}\n\n" +
-                if (permissions.isEmpty()) "No requested permissions listed."
-                else permissions.joinToString("\n") { "• $it" } +
-                    "\n\nThis is a permission inventory only; it does not execute or install the APK."
+                (if (permissions.isEmpty()) "No requested permissions listed."
+                else permissions.joinToString("\n") { "• $it" }) +
+                "\n\nThis is a permission inventory only; it does not execute or install the APK."
         }
     }
 
