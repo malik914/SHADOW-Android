@@ -86,6 +86,7 @@ class MainActivity : Activity() {
         addAction(content, "SCAN TCP PORTS") { scanPorts() }
         addAction(content, "CHECK HTTP SECURITY HEADERS") { inspectHeaders() }
         addAction(content, "INSPECT HTTPS CERTIFICATE") { inspectCertificate() }
+        addAction(content, "BASIC VULNERABILITY / CONFIGURATION SCAN") { runBasicVulnerabilityScan() }
         addAction(content, "ANALYZE APK PERMISSIONS") { chooseApk() }
 
         output = TextView(this).apply {
@@ -205,6 +206,89 @@ class MainActivity : Activity() {
             } finally {
                 connection.disconnect()
             }
+        }
+    }
+
+
+    // Passive configuration checks only: no exploit payloads, brute force, or intrusive probes.
+    private fun runBasicVulnerabilityScan() {
+        val host = try { targetHost() } catch (e: Exception) {
+            setResultText(e.message ?: "Invalid host"); return
+        }
+        runCheck("BASIC VULNERABILITY / CONFIGURATION SCAN  •  $host") {
+            val findings = mutableListOf<String>()
+            val notes = mutableListOf<String>()
+            var httpsOk = false
+
+            try {
+                val secure = URL("https://$host").openConnection() as HttpsURLConnection
+                try {
+                    secure.connectTimeout = 7000
+                    secure.readTimeout = 7000
+                    secure.instanceFollowRedirects = false
+                    secure.setRequestProperty("User-Agent", "SHADOW-Android/1.0")
+                    val status = secure.responseCode
+                    httpsOk = true
+                    notes.add("HTTPS endpoint responded with HTTP $status.")
+
+                    val checks = listOf(
+                        "Strict-Transport-Security" to "HSTS",
+                        "Content-Security-Policy" to "Content Security Policy",
+                        "X-Content-Type-Options" to "MIME sniffing protection",
+                        "X-Frame-Options" to "Clickjacking protection",
+                        "Referrer-Policy" to "Referrer policy",
+                        "Permissions-Policy" to "Browser permissions policy"
+                    )
+                    for ((header, label) in checks) {
+                        if (secure.getHeaderField(header).isNullOrBlank()) {
+                            findings.add("LOW: $label header is not present.")
+                        }
+                    }
+
+                    val server = secure.getHeaderField("Server")
+                    val powered = secure.getHeaderField("X-Powered-By")
+                    if (!server.isNullOrBlank()) notes.add("Server header is disclosed: $server")
+                    if (!powered.isNullOrBlank()) findings.add("INFO: X-Powered-By discloses: $powered")
+                } finally {
+                    secure.disconnect()
+                }
+            } catch (e: Exception) {
+                findings.add("REVIEW: HTTPS check failed: ${e.message ?: e.javaClass.simpleName}")
+            }
+
+            try {
+                val plain = URL("http://$host").openConnection() as HttpURLConnection
+                try {
+                    plain.connectTimeout = 7000
+                    plain.readTimeout = 7000
+                    plain.instanceFollowRedirects = false
+                    plain.setRequestProperty("User-Agent", "SHADOW-Android/1.0")
+                    val status = plain.responseCode
+                    val location = plain.getHeaderField("Location")
+                    if (status in 300..399 && !location.isNullOrBlank() &&
+                        location.startsWith("https://", ignoreCase = true)) {
+                        notes.add("HTTP redirects to HTTPS.")
+                    } else {
+                        findings.add("MEDIUM: HTTP did not clearly redirect to HTTPS (status $status).")
+                    }
+                } finally {
+                    plain.disconnect()
+                }
+            } catch (e: Exception) {
+                notes.add("HTTP check could not complete: ${e.message ?: e.javaClass.simpleName}")
+            }
+
+            val summary = if (findings.isEmpty()) {
+                "No issues were detected by these limited checks."
+            } else {
+                "Findings (${findings.size}):\n" + findings.joinToString("\n")
+            }
+            "BASIC SCAN RESULTS\nTarget: $host\nHTTPS reachable: $httpsOk\n\n" +
+                summary + "\n\nObservations:\n" +
+                (if (notes.isEmpty()) "No additional observations." else notes.joinToString("\n")) +
+                "\n\nIMPORTANT: This is a passive, limited configuration review—not a full vulnerability assessment. " +
+                "Missing headers or HTTP behavior do not by themselves prove an exploitable vulnerability. " +
+                "Only scan systems you own or are authorized to test."
         }
     }
 
