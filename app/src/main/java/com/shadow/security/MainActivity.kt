@@ -153,7 +153,7 @@ class MainActivity : Activity() {
         worker.execute {
             try {
                 val result = task()
-                if (label.contains("SCAN", ignoreCase = true)) {
+                if (label.contains("SCAN", ignoreCase = true) || label.contains("AUDIT", ignoreCase = true)) {
                     lastReport = result
                     saveScanHistory(label, result)
                 }
