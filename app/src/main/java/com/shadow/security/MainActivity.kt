@@ -788,10 +788,10 @@ class MainActivity : Activity() {
             val providers = info.providers?.toList().orEmpty()
             val appInfo = info.applicationInfo
             val exportedComponents = buildList {
-                activities.filter { it.exported }.forEach { add("Activity: \${it.name} | permission: \${it.permission ?: "none"}") }
-                services.filter { it.exported }.forEach { add("Service: \${it.name} | permission: \${it.permission ?: "none"}") }
-                receivers.filter { it.exported }.forEach { add("Receiver: \${it.name} | permission: \${it.permission ?: "none"}") }
-                providers.filter { it.exported }.forEach { add("Provider: \${it.name} | permission: \${it.readPermission ?: it.permission ?: "none"}") }
+                activities.filter { it.exported }.forEach { add("Activity: ${it.name} | permission: ${it.permission ?: "none"}") }
+                services.filter { it.exported }.forEach { add("Service: ${it.name} | permission: ${it.permission ?: "none"}") }
+                receivers.filter { it.exported }.forEach { add("Receiver: ${it.name} | permission: ${it.permission ?: "none"}") }
+                providers.filter { it.exported }.forEach { add("Provider: ${it.name} | permission: ${it.readPermission ?: it.permission ?: "none"}") }
             }
             val reviewPermissions = permissions.filter { it in setOf(
                 "android.permission.READ_CONTACTS", "android.permission.WRITE_CONTACTS",
@@ -815,11 +815,11 @@ class MainActivity : Activity() {
             } catch (_: Exception) { "not available" }
 
             buildString {
-                append("APK DEEP STATIC SECURITY AUDIT\nPackage: \${info.packageName}\nVersion: \${info.versionName ?: "unknown"}\n")
-                append("Target SDK: \${appInfo?.targetSdkVersion ?: -1}\nDebuggable: $debuggable\nAllow backup: $allowBackup\n")
+                append("APK DEEP STATIC SECURITY AUDIT\nPackage: ${info.packageName}\nVersion: ${info.versionName ?: "unknown"}\n")
+                append("Target SDK: ${appInfo?.targetSdkVersion ?: -1}\nDebuggable: $debuggable\nAllow backup: $allowBackup\n")
                 append("Cleartext traffic allowed: $cleartextAllowed\nSigning certificate SHA-256: $signingDigest\n")
-                append("Components: \${activities.size} activities | \${services.size} services | \${receivers.size} receivers | \${providers.size} providers\n")
-                append("Requested permissions: \${permissions.size}\n\nPERMISSIONS\n")
+                append("Components: ${activities.size} activities | ${services.size} services | ${receivers.size} receivers | ${providers.size} providers\n")
+                append("Requested permissions: ${permissions.size}\n\nPERMISSIONS\n")
                 append(if (permissions.isEmpty()) "No permissions listed." else permissions.joinToString("\n"))
                 append("\n\nSENSITIVE PERMISSIONS TO REVIEW\n")
                 append(if (reviewPermissions.isEmpty()) "No review-list permissions found." else reviewPermissions.joinToString("\n") { "REVIEW: $it" })
@@ -866,12 +866,12 @@ class MainActivity : Activity() {
                     total += bytes.size
                     val text = bytes.toString(Charsets.ISO_8859_1)
                     for ((label, regex) in patterns) {
-                        if (regex.containsMatchIn(text)) findings.add("REVIEW: $label pattern in \${entry.name}; value redacted.")
+                        if (regex.containsMatchIn(text)) findings.add("REVIEW: $label pattern in ${entry.name}; value redacted.")
                     }
                 }
             }
         } catch (e: Exception) {
-            findings.add("INFO: DEX scan incomplete: \${e.message ?: e.javaClass.simpleName}")
+            findings.add("INFO: DEX scan incomplete: ${e.message ?: e.javaClass.simpleName}")
         }
         return findings.toList()
     }
