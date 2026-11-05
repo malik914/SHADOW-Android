@@ -20,6 +20,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import java.io.File
+import java.util.zip.ZipFile
 import java.net.HttpURLConnection
 import java.net.Socket
 import java.net.URL
@@ -774,41 +775,94 @@ class MainActivity : Activity() {
             val services = info.services?.toList().orEmpty()
             val receivers = info.receivers?.toList().orEmpty()
             val providers = info.providers?.toList().orEmpty()
+            val appInfo = info.applicationInfo
             val exportedComponents = buildList {
-                activities.filter { it.exported }.forEach { add("Activity: ${it.name}") }
-                services.filter { it.exported }.forEach { add("Service: ${it.name}") }
-                receivers.filter { it.exported }.forEach { add("Receiver: ${it.name}") }
-                providers.filter { it.exported }.forEach {
-                    add("Provider: ${it.name} (authorities: ${it.authority ?: "not supplied"})")
-                }
+                activities.filter { it.exported }.forEach { add("Activity: \${it.name} | permission: \${it.permission ?: "none"}") }
+                services.filter { it.exported }.forEach { add("Service: \${it.name} | permission: \${it.permission ?: "none"}") }
+                receivers.filter { it.exported }.forEach { add("Receiver: \${it.name} | permission: \${it.permission ?: "none"}") }
+                providers.filter { it.exported }.forEach { add("Provider: \${it.name} | permission: \${it.readPermission ?: it.permission ?: "none"}") }
             }
-            val dangerousPermissions = permissions.filter { permission ->
-                permission in setOf(
-                    "android.permission.READ_CONTACTS", "android.permission.WRITE_CONTACTS",
-                    "android.permission.READ_CALL_LOG", "android.permission.WRITE_CALL_LOG",
-                    "android.permission.CAMERA", "android.permission.RECORD_AUDIO",
-                    "android.permission.ACCESS_FINE_LOCATION", "android.permission.ACCESS_COARSE_LOCATION",
-                    "android.permission.READ_SMS", "android.permission.SEND_SMS",
-                    "android.permission.RECEIVE_SMS", "android.permission.READ_PHONE_STATE",
-                    "android.permission.READ_EXTERNAL_STORAGE", "android.permission.WRITE_EXTERNAL_STORAGE"
-                )
+            val reviewPermissions = permissions.filter { it in setOf(
+                "android.permission.READ_CONTACTS", "android.permission.WRITE_CONTACTS",
+                "android.permission.READ_CALL_LOG", "android.permission.WRITE_CALL_LOG",
+                "android.permission.CAMERA", "android.permission.RECORD_AUDIO",
+                "android.permission.ACCESS_FINE_LOCATION", "android.permission.ACCESS_COARSE_LOCATION",
+                "android.permission.READ_SMS", "android.permission.SEND_SMS",
+                "android.permission.RECEIVE_SMS", "android.permission.READ_PHONE_STATE",
+                "android.permission.MANAGE_EXTERNAL_STORAGE", "android.permission.REQUEST_INSTALL_PACKAGES"
+            ) }
+            val flags = appInfo?.flags ?: 0
+            val debuggable = flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
+            val allowBackup = flags and android.content.pm.ApplicationInfo.FLAG_ALLOW_BACKUP != 0
+            val cleartextAllowed = if (android.os.Build.VERSION.SDK_INT >= 23) flags and android.content.pm.ApplicationInfo.FLAG_USES_CLEARTEXT_TRAFFIC != 0 else false
+            val dexFindings = scanDexForSecretPatterns(temp)
+            val signingDigest = try {
+                @Suppress("DEPRECATION")
+                info.signatures?.firstOrNull()?.toByteArray()?.let { bytes ->
+                    MessageDigest.getInstance("SHA-256").digest(bytes).joinToString(":") { "%02X".format(it) }
+                } ?: "not available"
+            } catch (_: Exception) { "not available" }
+
+            buildString {
+                append("APK DEEP STATIC SECURITY AUDIT\nPackage: \${info.packageName}\nVersion: \${info.versionName ?: "unknown"}\n")
+                append("Target SDK: \${appInfo?.targetSdkVersion ?: -1}\nDebuggable: $debuggable\nAllow backup: $allowBackup\n")
+                append("Cleartext traffic allowed: $cleartextAllowed\nSigning certificate SHA-256: $signingDigest\n")
+                append("Components: \${activities.size} activities | \${services.size} services | \${receivers.size} receivers | \${providers.size} providers\n")
+                append("Requested permissions: \${permissions.size}\n\nPERMISSIONS\n")
+                append(if (permissions.isEmpty()) "No permissions listed." else permissions.joinToString("\n"))
+                append("\n\nSENSITIVE PERMISSIONS TO REVIEW\n")
+                append(if (reviewPermissions.isEmpty()) "No review-list permissions found." else reviewPermissions.joinToString("\n") { "REVIEW: $it" })
+                append("\n\nEXPORTED COMPONENTS\n")
+                append(if (exportedComponents.isEmpty()) "No exported components reported." else exportedComponents.joinToString("\n"))
+                append("\n\nSTATIC FLAGS\n")
+                if (debuggable) append("HIGH: APK is marked debuggable.\n")
+                if (allowBackup) append("REVIEW: Android backup is enabled; check whether sensitive app data is excluded.\n")
+                if (cleartextAllowed) append("MEDIUM: App manifest allows cleartext traffic.\n")
+                if (exportedComponents.any { it.endsWith("permission: none") }) append("REVIEW: Exported component(s) have no component-level permission; inspect intent filters and authorization.\n")
+                append("\n\nPOSSIBLE HARDCODED SECRET PATTERNS\n")
+                append(if (dexFindings.isEmpty()) "No high-signal patterns found in scanned DEX strings; this does not prove secrets are absent." else dexFindings.joinToString("\n"))
+                append("\n\nLIMITATIONS\nStatic inspection only. Pattern matches can be false positives; values are never printed. Exported components and permissions require context and are not automatically vulnerabilities.")
             }
-            "APK STATIC SECURITY INVENTORY\\nPackage: ${info.packageName}\\nVersion: ${info.versionName ?: "unknown"}\\n" +
-                "Target SDK: ${info.applicationInfo?.targetSdkVersion ?: -1}\\n" +
-                "Requested permissions: ${permissions.size}\\n" +
-                "Components: ${activities.size} activities | ${services.size} services | ${receivers.size} receivers | ${providers.size} providers\\n\\n" +
-                "PERMISSIONS\\n" + (if (permissions.isEmpty()) "No requested permissions listed."
-                else permissions.joinToString("\\n") { "• $it" }) +
-                "\\n\\nSENSITIVE PERMISSIONS TO REVIEW\\n" +
-                (if (dangerousPermissions.isEmpty()) "No permissions from SHADOW's review list were found."
-                else dangerousPermissions.joinToString("\\n") { "REVIEW: $it" }) +
-                "\\n\\nEXPORTED COMPONENTS\\n" +
-                (if (exportedComponents.isEmpty()) "No exported components reported by Android's APK parser."
-                else exportedComponents.joinToString("\\n")) +
-                "\\n\\nCOMPONENT REVIEW\\nExported components are not automatically vulnerabilities. Verify intent filters, permissions, and whether external callers should access them. " +
-                "This static inventory does not execute the APK, inspect native code, or prove the presence or absence of hardcoded secrets."
 
         }
+    }
+
+    private fun scanDexForSecretPatterns(apk: File): List<String> {
+        val patterns = listOf(
+            "API key/token assignment" to Regex("""(?i)(api[_-]?key|access[_-]?token)\s*[:=]\s*["'][A-Za-z0-9._-]{12,}["']"""),
+            "Password/secret assignment" to Regex("""(?i)(client[_-]?secret|password|passwd)\s*[:=]\s*["'][^"'\s]{10,}["']"""),
+            "Private key marker" to Regex("""-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----""")
+        )
+        val findings = linkedSetOf<String>()
+        try {
+            ZipFile(apk).use { zip ->
+                val entries = zip.entries().asSequence()
+                    .filter { !it.isDirectory && Regex("""classes(\d+)?\.dex""").matches(it.name) }
+                    .take(8)
+                var total = 0
+                for (entry in entries) {
+                    if (entry.size > 8L * 1024 * 1024 || total >= 24 * 1024 * 1024) continue
+                    val bytes = zip.getInputStream(entry).use { input ->
+                        val out = java.io.ByteArrayOutputStream()
+                        val buffer = ByteArray(8192)
+                        while (out.size() < 8 * 1024 * 1024) {
+                            val n = input.read(buffer)
+                            if (n <= 0) break
+                            out.write(buffer, 0, n)
+                        }
+                        out.toByteArray()
+                    }
+                    total += bytes.size
+                    val text = bytes.toString(Charsets.ISO_8859_1)
+                    for ((label, regex) in patterns) {
+                        if (regex.containsMatchIn(text)) findings.add("REVIEW: $label pattern in \${entry.name}; value redacted.")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            findings.add("INFO: DEX scan incomplete: \${e.message ?: e.javaClass.simpleName}")
+        }
+        return findings.toList()
     }
 
     @Suppress("DEPRECATION")
