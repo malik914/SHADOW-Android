@@ -884,7 +884,8 @@ class MainActivity : Activity() {
                 PackageManager.GET_ACTIVITIES or
                 PackageManager.GET_SERVICES or
                 PackageManager.GET_RECEIVERS or
-                PackageManager.GET_PROVIDERS
+                PackageManager.GET_PROVIDERS or
+                PackageManager.GET_SIGNATURES
         )
 
     override fun onDestroy() {
