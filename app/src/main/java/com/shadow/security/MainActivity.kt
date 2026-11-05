@@ -73,7 +73,7 @@ class MainActivity : Activity() {
 
         hostInput = EditText(this).apply {
             hint = "Target host or URL (example.com)"
-            singleLine = true
+            setSingleLine(true)
             setTextColor(0xFFFFFFFF.toInt())
             setHintTextColor(0xFF9AAAB5.toInt())
             setBackgroundColor(0xFF24323D.toInt())
