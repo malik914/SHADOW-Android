@@ -223,12 +223,12 @@ class MainActivity : Activity() {
                                 append("SHADOW — OTP SECURITY ASSESSMENT\n")
                                 append("Target / project: $target\n")
                                 append("Assessment type: Manual implementation checklist\n")
-                                append("Controls reviewed: \${questions.size}\n")
+                                append("Controls reviewed: ${questions.size}\n")
                                 append("Confirmed: $yes | Missing: $no | Unverified: $unknown\n\n")
                                 append("CONTROL RESULTS\n")
                                 questions.forEachIndexed { i, question ->
-                                    append("\${i + 1}. $question\n")
-                                    append("   Result: \${answers[i]}\n")
+                                    append("${i + 1}. $question\n")
+                                    append("   Result: ${answers[i]}\n")
                                     if (answers[i].startsWith("NO")) {
                                         val severity = if (i == 0 || i == 4 || i == 5) "HIGH" else "MEDIUM"
                                         append("   Finding: $severity — control reported as missing; investigate and remediate.\n")
@@ -252,7 +252,7 @@ class MainActivity : Activity() {
                         return
                     }
                     android.app.AlertDialog.Builder(this)
-                        .setTitle("OTP SECURITY ASSESSMENT (\${index + 1}/\${questions.size})")
+                        .setTitle("OTP SECURITY ASSESSMENT (${index + 1}/${questions.size})")
                         .setMessage(questions[index])
                         .setItems(options) { _, which ->
                             answers.add(options[which])
